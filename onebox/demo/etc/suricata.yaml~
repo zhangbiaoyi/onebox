@@ -1,0 +1,277 @@
+%YAML 1.1
+---
+
+# Runmode the engine should use. Please check --list-runmodes to get the available
+# runmodes for each packet acquisition method. Defaults to "autofp" (auto flow pinned
+# load balancing).
+#runmode: autofp
+
+# Specifies the kind of flow load balancer used by the flow pinned autofp mode.
+#
+# Supported schedulers are:
+#
+# round-robin       - Flows assigned to threads in a round robin fashion.
+# active-packets    - Flows assigned to threads that have the lowest number of
+#                     unprocessed packets (default).
+# hash              - Flow alloted usihng the address hash. More of a random
+#                     technique. Was the default in Suricata 1.2.1 and older.
+#
+#autofp-scheduler: active-packets
+
+# If suricata box is a router for the sniffed networks, set it to 'router'. If
+# it is a pure sniffing setup, set it to 'sniffer-only'.
+# If set to auto, the variable is internally switch to 'router' in IPS mode
+# and 'sniffer-only' in IDS mode.
+# This feature is currently only used by the reject* keywords.
+host-mode: router
+#host-mode: auto
+
+default-log-dir: /opt/suricata/var/log/suricata/
+
+# When running in NFQ inline mode, it is possible to use a simulated
+# non-terminal NFQUEUE verdict.
+# This permit to do send all needed packet to suricata via this a rule:
+#        iptables -I FORWARD -m mark ! --mark $MARK/$MASK -j NFQUEUE
+# And below, you can have your standard filtering ruleset. To activate
+# this mode, you need to set mode to 'repeat'
+# If you want packet to be sent to another queue after an ACCEPT decision
+# set mode to 'route' and set next-queue value.
+# On linux >= 3.1, you can set batchcount to a value > 1 to improve performance
+# by processing several packets before sending a verdict (worker runmode only).
+# On linux >= 3.6, you can set the fail-open option to yes to have the kernel
+# accept the packet if suricata is not able to keep pace.
+#nfq:
+#  mode: accept
+#  repeat-mark: 1
+#  repeat-mask: 1
+#  route-queue: 2
+#  batchcount: 20
+#  fail-open: yes
+
+pcap:
+  - interface: eth0
+    # On Linux, pcap will try to use mmaped capture and will use buffer-size
+    # as total of memory used by the ring. So set this to something bigger
+    # than 1% of your bandwidth.
+    #buffer-size: 16777216
+    #bpf-filter: "tcp and port 25"
+    # Choose checksum verification mode for the interface. At the moment
+    # of the capture, some packets may be with an invalid checksum due to
+    # offloading to the network card of the checksum computation.
+    # Possible values are:
+    #  - yes: checksum validation is forced
+    #  - no: checksum validation is disabled
+    #  - auto: suricata uses a statistical approach to detect when
+    #  checksum off-loading is used. (default)
+    # Warning: 'checksum-validation' must be set to yes to have any validation
+    #checksum-checks: auto
+    # With some accelerator cards using a modified libpcap (like myricom), you
+    # may want to have the same number of capture threads as the number of capture
+    # rings. In this case, set up the threads variable to N to start N threads
+    # listening on the same interface.
+    #threads: 16
+    # set to no to disable promiscuous mode:
+    #promisc: no
+    # set snaplen, if not set it defaults to MTU if MTU can be known
+    # via ioctl call and to full capture if not.
+    #snaplen: 1518
+  # Put default values here
+  - interface: eth1
+    #checksum-checks: auto
+
+detect-engine:
+  - profile: medium
+  - custom-values:
+      toclient-src-groups: 2
+      toclient-dst-groups: 2
+      toclient-sp-groups: 2
+      toclient-dp-groups: 3
+      toserver-src-groups: 2
+      toserver-dst-groups: 4
+      toserver-sp-groups: 2
+      toserver-dp-groups: 25
+  - sgh-mpm-context: auto
+  - inspection-recursion-limit: 3000
+  # When rule-reload is enabled, sending a USR2 signal to the Suricata process
+  # will trigger a live rule reload. Experimental feature, use with care.
+  #- rule-reload: true
+  # If set to yes, the loading of signatures will be made after the capture
+  # is started. This will limit the downtime in IPS mode.
+  #- delayed-detect: yes
+
+# Suricata is multi-threaded. Here the threading can be influenced.
+threading:
+  # On some cpu's/architectures it is beneficial to tie individual threads
+  # to specific CPU's/CPU cores. In this case all threads are tied to CPU0,
+  # and each extra CPU/core has one "detect" thread.
+  #
+  # On Intel Core2 and Nehalem CPU's enabling this will degrade performance.
+  #
+  set-cpu-affinity: no
+  # Tune cpu affinity of suricata threads. Each family of threads can be bound
+  # on specific CPUs.
+  cpu-affinity:
+    - management-cpu-set:
+        cpu: [ 0 ]  # include only these cpus in affinity settings
+    - receive-cpu-set:
+        cpu: [ 0 ]  # include only these cpus in affinity settings
+    - decode-cpu-set:
+        cpu: [ 0, 1 ]
+        mode: "balanced"
+    - stream-cpu-set:
+        cpu: [ "0-1" ]
+    - detect-cpu-set:
+        cpu: [ "all" ]
+        mode: "exclusive" # run detect threads in these cpus
+        # Use explicitely 3 threads and don't compute number by using
+        # detect-thread-ratio variable:
+        # threads: 3
+        prio:
+          low: [ 0 ]
+          medium: [ "1-2" ]
+          high: [ 3 ]
+          default: "medium"
+    - verdict-cpu-set:
+        cpu: [ 0 ]
+        prio:
+          default: "high"
+    - reject-cpu-set:
+        cpu: [ 0 ]
+        prio:
+          default: "low"
+    - output-cpu-set:
+        cpu: [ "all" ]
+        prio:
+           default: "medium"
+  #
+  # By default Suricata creates one "detect" thread per available CPU/CPU core.
+  # This setting allows controlling this behaviour. A ratio setting of 2 will
+  # create 2 detect threads for each CPU/CPU core. So for a dual core CPU this
+  # will result in 4 detect threads. If values below 1 are used, less threads
+  # are created. So on a dual core CPU a setting of 0.5 results in 1 detect
+  # thread being created. Regardless of the setting at a minimum 1 detect
+  # thread will always be created.
+  #
+  detect-thread-ratio: 1.5
+
+mpm-algo: ac
+
+# The memory settings for hash size of these algorithms can vary from lowest
+# (2048) - low (4096) - medium (8192) - high (16384) - higher (32768) - max
+# (65536). The bloomfilter sizes of these algorithms can vary from low (512) -
+# medium (1024) - high (2048).
+
+# Defrag settings:
+
+defrag:
+  memcap: 32mb
+  hash-size: 65536
+  trackers: 65535 # number of defragmented flows to follow
+  max-frags: 65535 # number of fragments to keep (higher than trackers)
+  prealloc: yes
+  timeout: 60
+
+flow:
+  memcap: 64mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+vlan:
+  use-for-tracking: true
+
+flow-timeouts:
+
+  default:
+    new: 30
+    established: 300
+    closed: 0
+    emergency-new: 10
+    emergency-established: 100
+    emergency-closed: 0
+  tcp:
+    new: 60
+    established: 3600
+    closed: 120
+    emergency-new: 10
+    emergency-established: 300
+    emergency-closed: 20
+  udp:
+    new: 30
+    established: 300
+    emergency-new: 10
+    emergency-established: 100
+  icmp:
+    new: 30
+    established: 300
+    emergency-new: 10
+    emergency-established: 100
+
+
+stream:
+  memcap: 128mb
+  checksum-validation: yes      # reject wrong csums
+  inline: auto                  # auto will use inline mode in IPS mode, yes or no set it statically
+  reassembly:
+    memcap: 128mb
+    depth: 32mb                  # reassemble 1mb into a stream
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: no
+#    randomize-chunk-size: yes
+# Set the order of alerts bassed on actions
+# The default order is pass, drop, reject, alert
+action-order:
+  - pass
+  - drop
+  - reject
+  - alert
+
+app-layer:
+  protocols:
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443
+
+      #no-reassemble: yes
+    dcerpc:
+      enabled: yes
+    ftp:
+      enabled: yes
+    ssh:
+      enabled: yes
+    smtp:
+      enabled: yes
+    imap:
+      enabled: detection-only
+    msn:
+      enabled: detection-only
+    smb:
+      enabled: yes
+      detection-ports:
+        dp: 139
+    # smb2 detection is disabled internally inside the engine.
+    #smb2:
+    #  enabled: yes
+    dns:
+      # memcaps. Globally and per flow/state.
+      #global-memcap: 16mb
+      #state-memcap: 512kb
+
+      # How many unreplied DNS requests are considered a flood.
+      # If the limit is reached, app-layer-event:dns.flooded; will match.
+      #request-flood: 500
+
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+    http:
+      enabled: yes
+      # memcap: 64mb
+
